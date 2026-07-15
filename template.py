@@ -5,7 +5,17 @@ import logging
 logging.basicConfig(level=logging.INFO)
 
 list_of_files=[
-    "requirements.txt"
+    "requirements.txt",
+    "src/main.py",
+    "src/face.py",
+    "src/renderer.py",
+    "src/main.py",
+    "assets/preview_happy",
+    "assets/preview_sad",
+    "assets/preview_angry",
+    "assets/preview_happy",
+    "assets/preview_surprised",
+    "config/emotion.json"
 ]
 
 for filepath in list_of_files:
