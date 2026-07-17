@@ -1,0 +1,4 @@
+{
+    "model": "phi3",
+    "api_url": "http://localhost:11434/api/generate"
+}

@@ -9,13 +9,9 @@ list_of_files=[
     "src/main.py",
     "src/face.py",
     "src/renderer.py",
-    "src/main.py",
-    "assets/preview_happy",
-    "assets/preview_sad",
-    "assets/preview_angry",
-    "assets/preview_happy",
-    "assets/preview_surprised",
-    "config/emotion.json"
+    "src/text_gen.py",
+    "config/emotion.json",
+    "config/text_gen.json"
 ]
 
 for filepath in list_of_files:

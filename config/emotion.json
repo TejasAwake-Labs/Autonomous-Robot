@@ -1,5 +1,5 @@
 {
-  "emotion": "happy",
-  "intensity": 1.0,
-  "text": "Hello there! I am so happy that you got my code working."
+  "emotion": "sad",
+  "intensity": 0.75,
+  "text": "Unfortunately, I am programmed with no capacity for emotions like humans feel."
 }

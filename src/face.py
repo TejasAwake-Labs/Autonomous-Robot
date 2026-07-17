@@ -20,14 +20,14 @@ EMOTIONS = {
         "mouth_openness": 0.15,
     },
     "sad": {
-        "eyebrow_angle": -0.35,
+        "eyebrow_angle": 0.35,
         "eyebrow_height": -0.12,
         "eye_openness": 0.55,
         "mouth_curve": -0.7,
         "mouth_openness": 0.0,
     },
     "angry": {
-        "eyebrow_angle": 0.55,
+        "eyebrow_angle": -0.55,
         "eyebrow_height": -0.22,
         "eye_openness": 0.7,
         "mouth_curve": -0.5,
@@ -41,14 +41,14 @@ EMOTIONS = {
         "mouth_openness": 0.6,
     },
     "scared": {
-        "eyebrow_angle": -0.2,
+        "eyebrow_angle": 0.2,
         "eyebrow_height": 0.25,
         "eye_openness": 1.2,
         "mouth_curve": -0.2,
         "mouth_openness": 0.3,
     },
     "disgust": {
-        "eyebrow_angle": 0.45,
+        "eyebrow_angle": -0.45,
         "eyebrow_height": -0.15,
         "eye_openness": 0.5,
         "mouth_curve": -0.4,
@@ -69,9 +69,9 @@ class FaceState:
     """Tracks current + target facial parameters and animates between them."""
 
     def __init__(self):
-        self.current = dict(EMOTIONS["neutral"])
-        self.target = dict(EMOTIONS["neutral"])
-        self.emotion_name = "neutral"
+        self.current = dict(EMOTIONS["happy"])
+        self.target = dict(EMOTIONS["happy"])
+        self.emotion_name = "happy"
         self.intensity = 1.0
         self.last_text = ""
 

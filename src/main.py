@@ -4,9 +4,11 @@ import sys
 import time
 
 import pygame
+import threading
 
 from face import FaceState, EMOTIONS
 from renderer import draw_face
+from text_gen import generate_response
 
 WIDTH, HEIGHT = 1280, 720  # 16:9
 JSON_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "emotion.json")
@@ -32,6 +34,8 @@ SAMPLE_LINES = {
     "disgust": "Ugh, that is disgusting.",
 }
 
+stop_event = threading.Event()
+
 def load_json_emotion(last_mtime):
     """Reads emotion.json if it changed since last_mtime. Returns (data, new_mtime)."""
     try:
@@ -50,6 +54,29 @@ def load_json_emotion(last_mtime):
         # File mid-write or malformed - just skip this poll, try again next time
         return None, last_mtime
 
+def text_gen_worker():
+    """
+    Runs in a background thread: takes console input, calls the LLM,
+    and writes emotion.json. main.py's poll loop picks up the change
+    and animates the face.
+    """
+    print("Type to chat with the robot. Type 'quit' to exit this input loop.")
+    while not stop_event.is_set():
+        try:
+            user_in = input("You: ")
+        except (EOFError, KeyboardInterrupt):
+            break
+
+        if user_in.lower() in ("quit", "exit"):
+            stop_event.set()
+            break
+
+        if not user_in.strip():
+            continue
+
+        reply = generate_response(user_in)
+        print("Robot:", reply)
+
 def main():
     test_mode = "--test" in sys.argv  # runs a few frames headlessly then exits, for CI/sanity checks
 
@@ -60,6 +87,10 @@ def main():
     font = pygame.font.SysFont("arial", 18)
 
     face_state = FaceState()
+
+    if not test_mode:
+        worker = threading.Thread(target=text_gen_worker, daemon=True)
+        worker.start()
 
     last_mtime = None
     last_poll = 0.0
@@ -106,6 +137,8 @@ def main():
         frame_count += 1
         if test_mode and frame_count > 30:
             running = False
+
+    stop_event.set()
 
     pygame.quit()
 
