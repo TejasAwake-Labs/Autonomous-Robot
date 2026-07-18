@@ -10,3 +10,4 @@ data/
 tools/private_key.pem
 *.pem
 !config/auth_public_key.pem
+tools/output_token.txt
