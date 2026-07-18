@@ -10,6 +10,9 @@ from face import FaceState, EMOTIONS
 from renderer import draw_face
 from text_gen import generate_response
 
+from auth.activation_state import is_authorized
+from comms.listener import start_listener
+
 WIDTH, HEIGHT = 1280, 720  # 16:9
 JSON_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "emotion.json")
 POLL_INTERVAL = 0.2  # seconds between checking the JSON file for changes
@@ -88,12 +91,19 @@ def main():
 
     face_state = FaceState()
 
-    if not test_mode:
+    authorized = is_authorized()
+    if not authorized:
+        print("[Auth] Device is LOCKED. Starting token listener on port 5000...")
+        start_listener(port=5000)
+        face_state.set_emotion("angry", intensity=1.0, text="LOCKED. Awaiting valid token.")
+
+    if not test_mode and authorized:
         worker = threading.Thread(target=text_gen_worker, daemon=True)
         worker.start()
 
     last_mtime = None
     last_poll = 0.0
+    last_auth_check = time.time()
     frame_count = 0
 
     running = True
@@ -106,10 +116,10 @@ def main():
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
-                elif event.key in KEY_TO_EMOTION:
+                elif authorized and event.key in KEY_TO_EMOTION:
                     name = KEY_TO_EMOTION[event.key]
                     face_state.set_emotion(name, intensity=1.0)
-                elif event.key == pygame.K_t:
+                elif authorized and event.key == pygame.K_t:
                     face_state.set_emotion(
                         face_state.emotion_name,
                         intensity=face_state.intensity,
@@ -118,7 +128,26 @@ def main():
 
         # Poll emotion.json a few times a second (cheap, avoids hammering the filesystem every frame)
         now = time.time()
-        if now - last_poll > POLL_INTERVAL:
+        
+        # Periodic authorization re-check (e.g. every 5 seconds for easier testing)
+        if now - last_auth_check > 5.0:
+            last_auth_check = now
+            if authorized and not is_authorized():
+                print("[Auth] Token expired or revoked mid-session. Locking...")
+                authorized = False
+                face_state.set_emotion("angry", intensity=1.0, text="LOCKED. Token expired or revoked.")
+                stop_event.set()
+                start_listener(port=5000)
+            elif not authorized and is_authorized():
+                print("[Auth] Valid token received! Unlocking...")
+                authorized = True
+                face_state.set_emotion("neutral", intensity=1.0, text="Unlocked. Ready.")
+                stop_event.clear()
+                if not test_mode:
+                    worker = threading.Thread(target=text_gen_worker, daemon=True)
+                    worker.start()
+
+        if authorized and now - last_poll > POLL_INTERVAL:
             last_poll = now
             data, last_mtime = load_json_emotion(last_mtime)
             if data:

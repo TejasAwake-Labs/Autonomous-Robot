@@ -4,14 +4,23 @@ import logging
 
 logging.basicConfig(level=logging.INFO)
 
-list_of_files=[
+list_of_files = [
     "requirements.txt",
     "src/main.py",
     "src/face.py",
     "src/renderer.py",
     "src/text_gen.py",
+    "src/auth/__init__.py",
+    "src/auth/token_verifier.py",
+    "src/auth/activation_state.py",
+    "src/auth/revocation_check.py",
+    "src/comms/listener.py",
     "config/emotion.json",
-    "config/text_gen.json"
+    "config/text_gen.json",
+    "config/auth_public_key.pem",
+    "data/activation_state.dat",
+    "tools/generate_token.py",
+    ".gitignore",
 ]
 
 for filepath in list_of_files:
@@ -27,4 +36,4 @@ for filepath in list_of_files:
             logging.info(f"Creating empty file: {filepath}")
 
     else:
-        logging.info(f"{filename} is already exists")
+        logging.info(f"{filename} already exists")

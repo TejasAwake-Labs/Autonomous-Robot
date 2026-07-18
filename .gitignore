@@ -1,4 +1,12 @@
-# Adding virtual environment 
+# Virtual environment
 .venv/
+
+# Python cache
 __pycache__/
 *.pyc
+
+# Secrets / activation state
+data/
+tools/private_key.pem
+*.pem
+!config/auth_public_key.pem
