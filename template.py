@@ -10,7 +10,6 @@ list_of_files = [
     "src/face.py",
     "src/renderer.py",
     "src/text_gen.py",
-    "src/auth/__init__.py",
     "src/auth/token_verifier.py",
     "src/auth/activation_state.py",
     "src/auth/revocation_check.py",
@@ -20,6 +19,7 @@ list_of_files = [
     "config/auth_public_key.pem",
     "data/activation_state.dat",
     "tools/generate_token.py",
+    "mock_server/revoked_server.json",
     ".gitignore",
 ]
 
