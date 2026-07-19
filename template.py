@@ -19,7 +19,7 @@ list_of_files = [
     "config/auth_public_key.pem",
     "data/activation_state.dat",
     "tools/generate_token.py",
-    "mock_server/revoked_server.json",
+    "revocation_server/revoked_devices.json",
     ".gitignore",
 ]
 
