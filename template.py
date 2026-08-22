@@ -27,6 +27,7 @@ list_of_files = [
     "tools/generate_token.py",
     "revocation_server/revoked_devices.json",
     ".gitignore",
+    "doc/command.txt"
 ]
 
 for filepath in list_of_files:

@@ -1,0 +1,8 @@
+#generate key
+python ,\tools\generate_keys.py
+
+#generate token
+python .\tools\generate_token.py --device robot_001 --hours 24
+
+#invoke using https
+Invoke-RestMethod -Uri "http://localhost:5000/upload_token" -Method Post -ContentType "application/json" -Body '{"token": ""}'
