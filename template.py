@@ -6,6 +6,10 @@ logging.basicConfig(level=logging.INFO)
 
 list_of_files = [
     "requirements.txt",
+    "admin/app.py",
+    "www/html/login.html",
+    "www/js/login.js",
+    "www/css/login.css",
     "src/main.py",
     "src/face.py",
     "src/renderer.py",
@@ -17,6 +21,8 @@ list_of_files = [
     "config/emotion.json",
     "config/text_gen.json",
     "config/auth_public_key.pem",
+    "config/www_config.json",
+    "config/credentials.json",
     "data/activation_state.dat",
     "tools/generate_token.py",
     "revocation_server/revoked_devices.json",

@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Admin Login</title>
+<link rel="stylesheet" href="../css/login.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="login-card">
+    <h1>Admin Panel</h1>
+    <p class="subtitle">Autonomous Robot — Access Control</p>
+
+    <form id="loginForm">
+      <label for="username">Username</label>
+      <input type="text" id="username" name="username" autocomplete="username" required>
+
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" autocomplete="current-password" required>
+
+      <button type="submit" id="loginBtn">Log In</button>
+      <p id="errorMsg" class="error hidden"></p>
+    </form>
+  </div>
+
+  <script src="../js/login.js"></script>
+</body>
+</html>
