@@ -1,5 +1,5 @@
 #generate key
-python ,\tools\generate_keys.py
+python .\tools\generate_keys.py
 
 #generate token
 python .\tools\generate_token.py --device robot_001 --hours 24
