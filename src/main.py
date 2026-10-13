@@ -9,6 +9,7 @@ import threading
 from face import FaceState, EMOTIONS
 from renderer import draw_face
 from text_gen import generate_response
+from tts import tts_watcher
 
 WIDTH, HEIGHT = 1280, 720  # 16:9
 JSON_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "emotion.json")
@@ -91,6 +92,9 @@ def main():
     if not test_mode:
         worker = threading.Thread(target=text_gen_worker, daemon=True)
         worker.start()
+
+        tts_thread = threading.Thread(target=tts_watcher, args=(stop_event,), daemon=True)
+        tts_thread.start()
 
     last_mtime = None
     last_poll = 0.0
