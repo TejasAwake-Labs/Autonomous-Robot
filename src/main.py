@@ -2,6 +2,8 @@ import json
 import os
 import sys
 import time
+import subprocess
+from pathlib import Path
 
 import pygame
 import threading
@@ -38,6 +40,56 @@ SAMPLE_LINES = {
 }
 
 stop_event = threading.Event()
+
+
+def find_ui_executable():
+    """Return the compiled Qt UI executable, if one is available.
+
+    Set ROBOT_UI_EXECUTABLE to an absolute executable path when the Qt build
+    output lives somewhere other than the usual ui/build directory.
+    """
+    configured_path = os.environ.get("ROBOT_UI_EXECUTABLE")
+    if configured_path:
+        executable = Path(configured_path)
+        return executable if executable.is_file() else None
+
+    project_root = Path(__file__).resolve().parent.parent
+    ui_directory = project_root / "ui"
+    executable_names = ("ui.exe", "ui")
+
+    # Qt Creator's default CMake preset usually writes to ui/build. Search it
+    # recursively so Debug/Release and kit-specific folders both work.
+    for build_directory in (ui_directory / "build", ui_directory):
+        if not build_directory.is_dir():
+            continue
+        for name in executable_names:
+            matches = list(build_directory.rglob(name))
+            if matches:
+                return matches[0]
+    return None
+
+
+def open_ui(ui_process):
+    """Start the Qt interface once and return its process handle."""
+    if ui_process is not None and ui_process.poll() is None:
+        print("[UI] Interface is already open.")
+        return ui_process
+
+    executable = find_ui_executable()
+    if executable is None:
+        print(
+            "[UI] Qt interface was not found. Build the ui CMake project first, "
+            "or set ROBOT_UI_EXECUTABLE to the built ui executable."
+        )
+        return None
+
+    try:
+        ui_process = subprocess.Popen([str(executable)], cwd=str(executable.parent))
+        print(f"[UI] Opened interface: {executable}")
+        return ui_process
+    except OSError as error:
+        print(f"[UI] Could not open interface: {error}")
+        return None
 
 def load_json_emotion(last_mtime):
     """Reads emotion.json if it changed since last_mtime. Returns (data, new_mtime)."""
@@ -105,6 +157,7 @@ def main():
     last_poll = 0.0
     last_auth_check = time.time()
     frame_count = 0
+    ui_process = None
 
     running = True
     while running:
@@ -125,6 +178,8 @@ def main():
                         intensity=face_state.intensity,
                         text=SAMPLE_LINES.get(face_state.emotion_name, "Testing, testing."),
                     )
+                elif event.key == pygame.K_i:
+                    ui_process = open_ui(ui_process)
 
         # Poll emotion.json a few times a second (cheap, avoids hammering the filesystem every frame)
         now = time.time()
@@ -168,6 +223,11 @@ def main():
             running = False
 
     stop_event.set()
+
+    # Keep the UI independent while the face is running, but do not leave a
+    # child interface process behind when this program exits.
+    if ui_process is not None and ui_process.poll() is None:
+        ui_process.terminate()
 
     pygame.quit()
 
