@@ -1,3 +1,5 @@
 pygame
 requests
 python-dotenv
+pyttsx3
+pywin32

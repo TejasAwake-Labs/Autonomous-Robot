@@ -1,169 +1,198 @@
 """
-tts.py — Text-to-Speech watcher for the Autonomous Robot project.
+tts.py - Text-to-Speech watcher for the Autonomous Robot project.
 
-Monitors config/emotion.json for changes to the 'text' field and speaks
-the text using the Gemini TTS API (gemini-2.5-flash-preview-tts).
-Audio is streamed as PCM, then played back via pygame.mixer.
+Watches config/emotion.json; when the 'text' field changes, speaks it through
+the laptop speaker.
 
-Usage:
-    Runs automatically as a daemon thread launched from main.py.
-    Can also be tested standalone:
-        python tts.py
+Backends (set TTS_BACKEND in .env):
+    auto     (default) Gemini TTS if GEMINI_API_KEY is set, else offline.
+             If Gemini fails for any reason, falls back to offline.
+    gemini   Gemini only
+    offline  pyttsx3 only (system voices, no internet, no key)
+
+Optional .env values:
+    GEMINI_API_KEY=...
+    GEMINI_TTS_MODEL=gemini-2.5-flash-preview-tts
+    GEMINI_TTS_VOICE=Kore
 """
 
+import base64
 import io
 import json
 import logging
 import os
-import time
 import threading
+import time
 import wave
 
 import pygame
 import requests
 from dotenv import load_dotenv
 
-# Auto-load .env from the project root (one level above src/)
-_ENV_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
-load_dotenv(_ENV_PATH)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 logger = logging.getLogger(__name__)
 
-# ── Config ────────────────────────────────────────────────────────────────────
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EMOTION_JSON_PATH = os.path.join(BASE_DIR, "config", "emotion.json")
+POLL_INTERVAL = 0.25
 
-POLL_INTERVAL = 0.25          # seconds between file-change checks
-GEMINI_TTS_MODEL = "gemini-2.5-flash-preview-tts"
+TTS_BACKEND = os.environ.get("TTS_BACKEND", "auto").lower()
+GEMINI_TTS_MODEL = os.environ.get("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts")
+GEMINI_TTS_VOICE = os.environ.get("GEMINI_TTS_VOICE", "Kore")
 GEMINI_API_URL = (
-    f"https://generativelanguage.googleapis.com/v1beta/models/"
+    "https://generativelanguage.googleapis.com/v1beta/models/"
     f"{GEMINI_TTS_MODEL}:generateContent"
 )
 
-# Gemini TTS returns LINEAR16 PCM at 24 000 Hz, mono
+# Gemini TTS returns raw 16-bit mono PCM at 24 kHz
 SAMPLE_RATE = 24_000
 CHANNELS = 1
-SAMPLE_WIDTH = 2  # 16-bit -> 2 bytes
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _get_api_key() -> str:
-    """Read the Gemini API key from the .env file or environment."""
-    key = os.environ.get("GEMINI_API_KEY", "")
-    if not key:
-        raise EnvironmentError(
-            "GEMINI_API_KEY is not set.\n"
-            "Add it to your .env file in the project root:\n"
-            "  GEMINI_API_KEY=your_key_here\n"
-            "Get a free key at: https://aistudio.google.com/apikey"
-        )
-    return key
+SAMPLE_WIDTH = 2
 
 
-def _pcm_to_wav_bytes(pcm_bytes: bytes) -> bytes:
-    """Wrap raw LINEAR16 PCM bytes in a proper WAV container."""
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wf:
-        wf.setnchannels(CHANNELS)
-        wf.setsampwidth(SAMPLE_WIDTH)
-        wf.setframerate(SAMPLE_RATE)
-        wf.writeframes(pcm_bytes)
-    return buf.getvalue()
+# ── Audio init ────────────────────────────────────────────────────────────────
+
+def init_audio() -> None:
+    """Initialise pygame's mixer (needed for the Gemini backend)."""
+    if not pygame.mixer.get_init():
+        try:
+            pygame.mixer.init(frequency=SAMPLE_RATE, size=-16,
+                              channels=CHANNELS, buffer=4096)
+        except pygame.error as exc:
+            logger.error("[TTS] Could not initialise the audio device: %s", exc)
+            raise
 
 
-def _speak(text: str) -> None:
-    """
-    Call the Gemini TTS API for *text* and play the result through pygame.
+# ── Backend 1: Gemini ─────────────────────────────────────────────────────────
 
-    The response contains base64-encoded PCM audio inline in the JSON body.
-    We decode it, wrap it in a WAV header, and play via pygame.mixer.Sound.
-    """
-    import base64
-
-    api_key = _get_api_key()
+def _speak_gemini(text: str) -> bool:
+    """Returns True if audio was played, False on any failure."""
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        logger.warning("[TTS] GEMINI_API_KEY not set.")
+        return False
+    if not pygame.mixer.get_init():
+        logger.warning("[TTS] pygame mixer not initialised; cannot play Gemini audio.")
+        return False
 
     payload = {
-        "contents": [
-            {
-                "parts": [{"text": text}],
-                "role": "user"
-            }
-        ],
+        "contents": [{"parts": [{"text": text}]}],
         "generationConfig": {
             "responseModalities": ["AUDIO"],
             "speechConfig": {
                 "voiceConfig": {
-                    "prebuiltVoiceConfig": {
-                        "voiceName": "Kore"   # clear, robotic-ish voice
-                    }
+                    "prebuiltVoiceConfig": {"voiceName": GEMINI_TTS_VOICE}
                 }
-            }
-        }
+            },
+        },
     }
-
-    headers = {"Content-Type": "application/json"}
-    url = f"{GEMINI_API_URL}?key={api_key}"
+    headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
 
     try:
-        logger.info(f"[TTS] Requesting speech for: {text[:60]}...")
-        resp = requests.post(url, json=payload, headers=headers, timeout=30)
-        resp.raise_for_status()
+        logger.info("[TTS] Gemini (%s): %s", GEMINI_TTS_MODEL, text[:60])
+        resp = requests.post(GEMINI_API_URL, json=payload, headers=headers, timeout=30)
+        if resp.status_code != 200:
+            # Show WHY it failed (bad model name, bad key, quota, ...)
+            logger.error("[TTS] Gemini HTTP %s: %s", resp.status_code, resp.text[:400])
+            return False
+
         data = resp.json()
+        parts = data["candidates"][0]["content"]["parts"]
+        inline = parts[0]["inlineData"]
+        pcm = base64.b64decode(inline["data"])
 
-        # Navigate to the inline audio data
-        # Path: candidates[0].content.parts[0].inlineData.data  (base64 PCM)
-        candidates = data.get("candidates", [])
-        if not candidates:
-            logger.error("[TTS] No candidates in Gemini TTS response.")
-            return
+        rate = SAMPLE_RATE
+        mime = inline.get("mimeType", "")          # e.g. audio/L16;codec=pcm;rate=24000
+        if "rate=" in mime:
+            try:
+                rate = int(mime.split("rate=")[1].split(";")[0])
+            except ValueError:
+                pass
 
-        parts = candidates[0].get("content", {}).get("parts", [])
-        if not parts:
-            logger.error("[TTS] No parts in Gemini TTS response candidate.")
-            return
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(CHANNELS)
+            w.setsampwidth(SAMPLE_WIDTH)
+            w.setframerate(rate)
+            w.writeframes(pcm)
+        buf.seek(0)
 
-        inline_data = parts[0].get("inlineData", {})
-        b64_audio = inline_data.get("data", "")
-        if not b64_audio:
-            logger.error("[TTS] No audio data in Gemini TTS response.")
-            return
-
-        pcm_bytes = base64.b64decode(b64_audio)
-        wav_bytes = _pcm_to_wav_bytes(pcm_bytes)
-
-        # Play via pygame (mixer must already be initialised in main.py)
-        sound = pygame.mixer.Sound(io.BytesIO(wav_bytes))
+        sound = pygame.mixer.Sound(buf)
         sound.play()
-        logger.info("[TTS] Playing audio...")
-
-        # Wait for playback to finish so we don't clobber rapid successive calls
         while pygame.mixer.get_busy():
             time.sleep(0.05)
+        return True
 
-    except requests.exceptions.RequestException as exc:
-        logger.error(f"[TTS] Network error calling Gemini TTS: {exc}")
+    except (requests.RequestException, KeyError, IndexError, ValueError) as exc:
+        logger.error("[TTS] Gemini failed: %r", exc)
+        return False
+
+
+# ── Backend 2: offline (pyttsx3 -> Windows SAPI5 / system voices) ────────────
+
+def _speak_offline(text: str) -> bool:
+    try:
+        import pyttsx3
+    except ImportError:
+        logger.error("[TTS] pyttsx3 not installed. Run: pip install pyttsx3 pywin32")
+        return False
+
+    # SAPI5 needs COM initialised in any non-main thread (Windows)
+    try:
+        import pythoncom
+        pythoncom.CoInitialize()
+    except ImportError:
+        pass
+
+    try:
+        logger.info("[TTS] Offline voice: %s", text[:60])
+        engine = pyttsx3.init()          # fresh engine per call avoids thread hangs
+        engine.setProperty("rate", 175)
+        engine.setProperty("volume", 1.0)
+        engine.say(text)
+        engine.runAndWait()
+        engine.stop()
+        return True
     except Exception as exc:
-        logger.error(f"[TTS] Unexpected error: {exc}")
+        logger.error("[TTS] Offline TTS failed: %r", exc)
+        return False
+
+
+def _speak(text: str) -> None:
+    if TTS_BACKEND == "offline":
+        _speak_offline(text)
+        return
+    if TTS_BACKEND == "gemini":
+        _speak_gemini(text)
+        return
+    # auto
+    if os.environ.get("GEMINI_API_KEY", "").strip() and _speak_gemini(text):
+        return
+    logger.info("[TTS] Falling back to offline voice.")
+    _speak_offline(text)
 
 
 # ── Watcher thread ────────────────────────────────────────────────────────────
 
 def tts_watcher(stop_event: threading.Event) -> None:
-    """
-    Background thread: polls emotion.json every POLL_INTERVAL seconds.
-    When the 'text' field changes, speaks the new text via Gemini TTS.
+    """Polls emotion.json; speaks the 'text' field whenever it changes."""
+    try:
+        init_audio()
+    except pygame.error:
+        logger.warning("[TTS] No pygame mixer; only the offline backend can work.")
 
-    Args:
-        stop_event: threading.Event set by main() when the app is shutting down.
-    """
-    # Ensure pygame.mixer is ready (it may already be initialised by main.py)
-    if not pygame.mixer.get_init():
-        pygame.mixer.init(frequency=SAMPLE_RATE, size=-16, channels=CHANNELS, buffer=4096)
-
+    # Baseline: whatever is in the file at startup is NOT spoken.
     last_mtime = None
-    last_text: str = ""
+    last_text = ""
+    try:
+        last_mtime = os.path.getmtime(EMOTION_JSON_PATH)
+        with open(EMOTION_JSON_PATH, "r") as f:
+            last_text = str(json.load(f).get("text", "")).strip()
+    except (json.JSONDecodeError, OSError):
+        pass
 
-    logger.info("[TTS] Watcher started -- monitoring emotion.json for text changes.")
+    logger.info("[TTS] Watcher started (backend=%s).", TTS_BACKEND)
 
     while not stop_event.is_set():
         try:
@@ -173,18 +202,16 @@ def tts_watcher(stop_event: threading.Event) -> None:
             continue
 
         if mtime != last_mtime:
-            last_mtime = mtime
             try:
                 with open(EMOTION_JSON_PATH, "r") as f:
                     data = json.load(f)
-                text = data.get("text", "").strip()
+                last_mtime = mtime
+                text = str(data.get("text", "")).strip()
                 if text and text != last_text:
                     last_text = text
-                    # Speak in this same thread (blocks until done).
-                    # Single-threaded audio prevents overlapping playback.
-                    _speak(text)
+                    _speak(text)      # blocks until finished -> no overlap
             except (json.JSONDecodeError, OSError):
-                pass  # file mid-write, skip and retry
+                logger.debug("[TTS] emotion.json busy; retrying.")
 
         time.sleep(POLL_INTERVAL)
 
@@ -194,14 +221,17 @@ def tts_watcher(stop_event: threading.Event) -> None:
 # ── Standalone test ───────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    pygame.mixer.init(frequency=SAMPLE_RATE, size=-16, channels=CHANNELS, buffer=4096)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    pygame.mixer.pre_init(frequency=SAMPLE_RATE, size=-16, channels=1, buffer=4096)
+    pygame.mixer.init()
+
+    # Quick direct test, bypassing the file watcher:
+    _speak("Hello, this is a speaker test.")
 
     stop = threading.Event()
     t = threading.Thread(target=tts_watcher, args=(stop,), daemon=True)
     t.start()
-
-    print("TTS watcher running. Edit config/emotion.json to test. Ctrl-C to quit.")
+    print("Watching emotion.json. Edit its 'text' to test. Ctrl-C to quit.")
     try:
         while True:
             time.sleep(1)
@@ -209,4 +239,3 @@ if __name__ == "__main__":
         stop.set()
         t.join(timeout=3)
         pygame.mixer.quit()
-        print("TTS watcher stopped.")

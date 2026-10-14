@@ -1,18 +1,21 @@
 import json
+import logging
 import os
 import sys
+import threading
 import time
 
 import pygame
-import threading
 
 from face import FaceState, EMOTIONS
 from renderer import draw_face
 from text_gen import generate_response
-from tts import tts_watcher
+from tts import SAMPLE_RATE, init_audio, tts_watcher
 
 WIDTH, HEIGHT = 1280, 720  # 16:9
-JSON_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "emotion.json")
+JSON_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "emotion.json"
+)
 POLL_INTERVAL = 0.2  # seconds between checking the JSON file for changes
 
 KEY_TO_EMOTION = {
@@ -37,6 +40,7 @@ SAMPLE_LINES = {
 
 stop_event = threading.Event()
 
+
 def load_json_emotion(last_mtime):
     """Reads emotion.json if it changed since last_mtime. Returns (data, new_mtime)."""
     try:
@@ -52,16 +56,12 @@ def load_json_emotion(last_mtime):
             data = json.load(f)
         return data, mtime
     except (json.JSONDecodeError, OSError):
-        # File mid-write or malformed - just skip this poll, try again next time
         return None, last_mtime
 
+
 def text_gen_worker():
-    """
-    Runs in a background thread: takes console input, calls the LLM,
-    and writes emotion.json. main.py's poll loop picks up the change
-    and animates the face.
-    """
-    print("Type to chat with the robot. Type 'quit' to exit this input loop.")
+    """Background thread: console input -> LLM -> writes emotion.json."""
+    print("Type to chat with the robot. Type 'quit' to exit.")
     while not stop_event.is_set():
         try:
             user_in = input("You: ")
@@ -78,10 +78,20 @@ def text_gen_worker():
         reply = generate_response(user_in)
         print("Robot:", reply)
 
-def main():
-    test_mode = "--test" in sys.argv  # runs a few frames headlessly then exits, for CI/sanity checks
 
+def main():
+    test_mode = "--test" in sys.argv
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+    pygame.mixer.pre_init(frequency=SAMPLE_RATE, size=-16, channels=1, buffer=4096)
     pygame.init()
+    try:
+        init_audio()
+    except pygame.error:
+        print("[warn] pygame mixer unavailable; Gemini audio disabled "
+              "(offline voice will still be tried).")
+
     pygame.display.set_caption("Facial Expression Prototype")
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     clock = pygame.time.Clock()
@@ -90,18 +100,15 @@ def main():
     face_state = FaceState()
 
     if not test_mode:
-        worker = threading.Thread(target=text_gen_worker, daemon=True)
-        worker.start()
-
-        tts_thread = threading.Thread(target=tts_watcher, args=(stop_event,), daemon=True)
-        tts_thread.start()
+        threading.Thread(target=text_gen_worker, daemon=True).start()
+        threading.Thread(target=tts_watcher, args=(stop_event,), daemon=True).start()
 
     last_mtime = None
     last_poll = 0.0
     frame_count = 0
 
     running = True
-    while running:
+    while running and not stop_event.is_set():
         dt = clock.tick(60) / 1000.0
 
         for event in pygame.event.get():
@@ -111,8 +118,7 @@ def main():
                 if event.key == pygame.K_ESCAPE:
                     running = False
                 elif event.key in KEY_TO_EMOTION:
-                    name = KEY_TO_EMOTION[event.key]
-                    face_state.set_emotion(name, intensity=1.0)
+                    face_state.set_emotion(KEY_TO_EMOTION[event.key], intensity=1.0)
                 elif event.key == pygame.K_t:
                     face_state.set_emotion(
                         face_state.emotion_name,
@@ -120,14 +126,16 @@ def main():
                         text=SAMPLE_LINES.get(face_state.emotion_name, "Testing, testing."),
                     )
 
-        # Poll emotion.json a few times a second (cheap, avoids hammering the filesystem every frame)
         now = time.time()
         if now - last_poll > POLL_INTERVAL:
             last_poll = now
             data, last_mtime = load_json_emotion(last_mtime)
             if data:
                 emotion = data.get("emotion", "neutral")
-                intensity = float(data.get("intensity", 1.0))
+                try:
+                    intensity = float(data.get("intensity", 1.0))
+                except (TypeError, ValueError):
+                    intensity = 1.0
                 text = data.get("text")
                 if emotion not in EMOTIONS:
                     print(f"[warn] unknown emotion '{emotion}' in emotion.json, ignoring")
@@ -143,8 +151,9 @@ def main():
             running = False
 
     stop_event.set()
-
     pygame.quit()
+
 
 if __name__ == "__main__":
     main()
+    
