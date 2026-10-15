@@ -3,3 +3,6 @@ requests
 python-dotenv
 pyttsx3
 pywin32
+sounddevice 
+numpy
+faster-whisper
