@@ -12,11 +12,18 @@ from renderer import draw_face
 from text_gen import generate_response
 from tts import SAMPLE_RATE, init_audio, tts_watcher
 
+try:
+    from sst import stt_listener
+except ImportError as exc:
+    stt_listener = None
+    _STT_IMPORT_ERROR = exc
+
 WIDTH, HEIGHT = 1280, 720  # 16:9
 JSON_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "emotion.json"
 )
 POLL_INTERVAL = 0.2  # seconds between checking the JSON file for changes
+BASE_CAPTION = "Facial Expression Prototype"
 
 KEY_TO_EMOTION = {
     pygame.K_1: "neutral",
@@ -39,6 +46,8 @@ SAMPLE_LINES = {
 }
 
 stop_event = threading.Event()
+mic_enabled = threading.Event()   # set = microphone is listening
+llm_lock = threading.Lock()       # typed and spoken input never hit the LLM at once
 
 
 def load_json_emotion(last_mtime):
@@ -59,9 +68,21 @@ def load_json_emotion(last_mtime):
         return None, last_mtime
 
 
+def handle_user_text(user_in):
+    """Send text to the LLM (which writes emotion.json). Used by keyboard and voice."""
+    with llm_lock:
+        reply = generate_response(user_in)
+    print("Robot:", reply)
+
+
+def on_voice_text(text):
+    print(f"You (voice): {text}")
+    handle_user_text(text)
+
+
 def text_gen_worker():
     """Background thread: console input -> LLM -> writes emotion.json."""
-    print("Type to chat with the robot. Type 'quit' to exit.")
+    print("Type to chat with the robot (or just speak). Type 'quit' to exit.")
     while not stop_event.is_set():
         try:
             user_in = input("You: ")
@@ -75,14 +96,23 @@ def text_gen_worker():
         if not user_in.strip():
             continue
 
-        reply = generate_response(user_in)
-        print("Robot:", reply)
+        handle_user_text(user_in)
+
+
+def update_caption(mic_available):
+    if not mic_available:
+        pygame.display.set_caption(BASE_CAPTION)
+    else:
+        state = "ON" if mic_enabled.is_set() else "OFF"
+        pygame.display.set_caption(f"{BASE_CAPTION}  |  Mic {state} (press M)")
 
 
 def main():
     test_mode = "--test" in sys.argv
+    use_mic = "--no-mic" not in sys.argv
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    logging.getLogger("comtypes").setLevel(logging.WARNING)
 
     pygame.mixer.pre_init(frequency=SAMPLE_RATE, size=-16, channels=1, buffer=4096)
     pygame.init()
@@ -92,16 +122,30 @@ def main():
         print("[warn] pygame mixer unavailable; Gemini audio disabled "
               "(offline voice will still be tried).")
 
-    pygame.display.set_caption("Facial Expression Prototype")
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("arial", 18)
 
     face_state = FaceState()
 
+    mic_available = False
     if not test_mode:
         threading.Thread(target=text_gen_worker, daemon=True).start()
         threading.Thread(target=tts_watcher, args=(stop_event,), daemon=True).start()
+
+        if use_mic and stt_listener is not None:
+            mic_enabled.set()
+            mic_available = True
+            threading.Thread(
+                target=stt_listener,
+                args=(on_voice_text, stop_event, mic_enabled),
+                daemon=True,
+            ).start()
+        elif use_mic:
+            print(f"[warn] Voice input disabled: {_STT_IMPORT_ERROR}. "
+                  "Run: pip install sounddevice numpy faster-whisper")
+
+    update_caption(mic_available)
 
     last_mtime = None
     last_poll = 0.0
@@ -117,6 +161,12 @@ def main():
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
+                elif event.key == pygame.K_m and mic_available:
+                    if mic_enabled.is_set():
+                        mic_enabled.clear()
+                    else:
+                        mic_enabled.set()
+                    update_caption(mic_available)
                 elif event.key in KEY_TO_EMOTION:
                     face_state.set_emotion(KEY_TO_EMOTION[event.key], intensity=1.0)
                 elif event.key == pygame.K_t:
@@ -156,4 +206,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
